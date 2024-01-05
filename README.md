@@ -3,6 +3,5 @@ WebGpu with Rust and wgpu
 
 commands to run
 
-cargo run "point-list"
-cargo run "line-list"
-cargo run "line-strip"
+cargo run "triangle-list"
+cargo run "triangle-strip"
