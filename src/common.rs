@@ -82,7 +82,7 @@ impl State {
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/light-model.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/sphere-light.wgsl").into()),
                 //source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/examples/ch06/line3d.wgsl")).into()),
             });
 

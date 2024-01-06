@@ -37,6 +37,8 @@ impl InitWgpu {
             .await
             .unwrap();
 
+        let surface_caps = surface.get_capabilities(&adapter);
+        let format = surface_caps.formats[0];
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -49,8 +51,6 @@ impl InitWgpu {
             .await
             .unwrap();
 
-        let surface_caps = surface.get_capabilities(&adapter);
-        let format = surface_caps.formats[0];
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
