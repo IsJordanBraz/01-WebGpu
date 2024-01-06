@@ -8,8 +8,6 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::Window,
 };
-#[path = "surface_data.rs"]
-mod surface;
 #[path = "transforms.rs"]
 mod transforms;
 
@@ -61,30 +59,6 @@ pub fn vertex(p: [f32; 3], n: [f32; 3], c: [f32; 3]) -> Vertex {
     }
 }
 
-pub fn create_vertices(
-    f: &dyn Fn(f32, f32) -> [f32; 3],
-    colormap_name: &str,
-    xmin: f32,
-    xmax: f32,
-    zmin: f32,
-    zmax: f32,
-    nx: usize,
-    nz: usize,
-    scale: f32,
-    aspect: f32,
-) -> Vec<Vertex> {
-    let (pts, yrange) =
-        surface::simple_surface_points(f, xmin, xmax, zmin, zmax, nx, nz, scale, aspect);
-    let pos = surface::simple_surface_positions(&pts, nx, nz);
-    let normal = surface::simple_surface_normals(&pts, nx, nz);
-    let color = surface::simple_surface_colors(&pts, nx, nz, yrange, colormap_name);
-    let mut data: Vec<Vertex> = Vec::with_capacity(pos.len());
-    for i in 0..pos.len() {
-        data.push(vertex(pos[i], normal[i], color[i]));
-    }
-    data.to_vec()
-}
-
 impl Vertex {
     const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
         wgpu::vertex_attr_array![0=>Float32x4, 1=>Float32x4, 2=>Float32x4];
@@ -106,17 +80,31 @@ pub struct State {
     view_mat: Matrix4<f32>,
     project_mat: Matrix4<f32>,
     num_vertices: u32,
+    index_buffer: wgpu::Buffer,
 }
 
 impl State {
-    pub async fn new(window: &Window, vertex_data: &Vec<Vertex>, light_data: Light) -> Self {
+    pub async fn new(
+        window: &Window,
+        pos_data: &Vec<[f32; 3]>,
+        normal_data: &Vec<[f32; 3]>,
+        color_data: &Vec<[f32; 3]>,
+        index_data: &Vec<u32>,
+        light_data: Light,
+    ) -> Self {
+        let mut vertex_data: Vec<Vertex> = Vec::with_capacity(pos_data.len());
+        for i in 0..pos_data.len() {
+            vertex_data.push(vertex(pos_data[i], normal_data[i], color_data[i]));
+        }
+        vertex_data.to_vec();
+
         let init = transforms::InitWgpu::init_wgpu(window).await;
 
         let shader = init
             .device
             .create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("Shader"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/surface.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/parametric.wgsl").into()),
                 //source: wgpu::ShaderSource::Wgsl(include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/examples/ch06/line3d.wgsl")).into()),
             });
 
@@ -286,10 +274,19 @@ impl State {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
-                contents: cast_slice(vertex_data),
+                contents: cast_slice(&vertex_data),
                 usage: wgpu::BufferUsages::VERTEX,
             });
-        let num_vertices = vertex_data.len() as u32;
+
+        let index_buffer = init
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Index Buffer"),
+                contents: cast_slice(index_data),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+        let num_vertices = index_data.len() as u32;
 
         Self {
             init,
@@ -300,6 +297,7 @@ impl State {
             view_mat,
             project_mat,
             num_vertices,
+            index_buffer,
         }
     }
 
@@ -417,7 +415,8 @@ impl State {
             render_pass.set_pipeline(&self.pipeline);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
-            render_pass.draw(0..self.num_vertices, 0..1);
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..self.num_vertices, 0, 0..1);
         }
 
         self.init.queue.submit(iter::once(encoder.finish()));
@@ -427,15 +426,28 @@ impl State {
     }
 }
 
-pub fn run(vertex_data: &Vec<Vertex>, light_data: Light, colormap_name: &str, title: &str) {
+pub fn run(
+    pos_data: &Vec<[f32; 3]>,
+    normal_data: &Vec<[f32; 3]>,
+    color_data: &Vec<[f32; 3]>,
+    index_data: &Vec<u32>,
+    light_data: Light,
+) {
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = winit::window::WindowBuilder::new()
         .build(&event_loop)
         .unwrap();
-    window.set_title(&*format!("ch09_{}: {}", title, colormap_name));
+    window.set_title(&*format!("Parametric 3D Surface"));
 
-    let mut state = pollster::block_on(State::new(&window, &vertex_data, light_data));
+    let mut state = pollster::block_on(State::new(
+        &window,
+        &pos_data,
+        &normal_data,
+        &color_data,
+        &index_data,
+        light_data,
+    ));
     let render_start_time = std::time::Instant::now();
 
     event_loop.run(move |event, _, control_flow| match event {
