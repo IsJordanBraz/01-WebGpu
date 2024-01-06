@@ -12,6 +12,7 @@ mod transforms;
 mod vertex_data;
 
 const IS_PERSPECTIVE: bool = true;
+const ANIMATION_SPEED: f32 = 1.0;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
@@ -216,7 +217,20 @@ impl State {
         false
     }
 
-    fn update(&mut self) {}
+    fn update(&mut self, dt: std::time::Duration) {
+        // update uniform buffer
+        let dt = ANIMATION_SPEED * dt.as_secs_f32();
+        let model_mat = transforms::create_transforms(
+            [0.0, 0.0, 0.0],
+            [dt.sin(), dt.cos(), 0.0],
+            [1.0, 1.0, 1.0],
+        );
+        let mvp_mat = self.project_mat * self.view_mat * model_mat;
+        let mvp_ref: &[f32; 16] = mvp_mat.as_ref();
+        self.init
+            .queue
+            .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(mvp_ref));
+    }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         //let output = self.init.surface.get_current_frame()?.output;
@@ -291,8 +305,10 @@ fn main() {
     env_logger::init();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new().build(&event_loop).unwrap();
-    window.set_title(&*format!("{}", "cube with distinct face colors"));
+    window.set_title(&*format!("{}", "cube rotation"));
     let mut state = pollster::block_on(State::new(&window));
+
+    let start_time = std::time::Instant::now();
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -322,7 +338,10 @@ fn main() {
             }
         }
         Event::RedrawRequested(_) => {
-            state.update();
+            let now = std::time::Instant::now();
+            let dt = now - start_time;
+            state.update(dt);
+
             match state.render() {
                 Ok(_) => {}
                 Err(wgpu::SurfaceError::Lost) => state.resize(state.init.size),
