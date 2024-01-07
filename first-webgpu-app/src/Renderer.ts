@@ -5,7 +5,7 @@ export class Renderer {
     private device!: GPUDevice;
     private pipeline!: GPURenderPipeline;
     private vertexBuffer!: GPUBuffer;
-    private colorsBuffer!: GPUBuffer;
+    private vertices!: Float32Array;
 
     public async initialize() {
         if (!navigator.gpu) {
@@ -23,48 +23,45 @@ export class Renderer {
             device: this.device,
             format: canvasFormat,
         });
-
-        this.vertexBuffer = this.createBuffer(new Float32Array([
-            -0.5, -0.5,
-            0.5, -0.5,
-            0.0, 0.5
-        ]), "Cell vertices");
-        this.colorsBuffer = this.createBuffer(new Float32Array([
-           1.0, 0.0, 0.0,
-           0.0, 1.0, 0.0,
-           0.0, 0.0, 1.0,
-        ]), "Cell colors");
-
         this.loadShader(canvasFormat);
     }
-
+    
     public draw() {
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
             colorAttachments: [{
                view: this.context.getCurrentTexture().createView(),
                loadOp: "clear",
-               clearValue: { r: 0.67, g: 0.67, b: 0.67, a: 1 },
+               clearValue: { r: 0, g: 0, b: 0.4, a: 1 },
                storeOp: "store",
             }]
         });
         pass.setPipeline(this.pipeline);
-       
         pass.setVertexBuffer(0, this.vertexBuffer);
-        pass.setVertexBuffer(1, this.colorsBuffer);
-
-        pass.draw(3);
+        pass.draw(this.vertices.length / 2); // 6 vertices
         pass.end();
         this.device.queue.submit([encoder.finish()]);
     }
 
     private loadShader(canvasFormat: GPUTextureFormat) {
-        const shaderModule = this.device.createShaderModule({
-            code: triangleShader,
+        this.vertices = new Float32Array([
+            -0.8, -0.8, // Triangle 1 (Blue)
+            0.8, -0.8,
+            0.8,  0.8,        
+            -0.8, -0.8, // Triangle 2 (Red)
+            0.8,  0.8,
+            -0.8,  0.8,
+        ]);
+    
+        this.vertexBuffer = this.device.createBuffer({
+            label: "Cell vertices",
+            size: this.vertices.byteLength,
+            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
         });
+        this.device.queue.writeBuffer(this.vertexBuffer, /*bufferOffset=*/0, this.vertices);
 
         const vertexBufferLayout: GPUVertexBufferLayout = {
-            arrayStride: 2 * Float32Array.BYTES_PER_ELEMENT,
+            arrayStride: 8,
             attributes: [{
                 format: "float32x2",
                 offset: 0,
@@ -72,45 +69,24 @@ export class Renderer {
             }],
         };
 
-        const colorsBufferLayout: GPUVertexBufferLayout = {
-            arrayStride: 3 * Float32Array.BYTES_PER_ELEMENT,
-            attributes: [{
-                format: "float32x3",
-                offset: 0,
-                shaderLocation: 1, // colors, see vertex shader
-            }],
-        };        
+        const shaderModule = this.device.createShaderModule({
+            label: "Cell shader",
+            code: triangleShader,
+        });
 
         this.pipeline = this.device.createRenderPipeline({
+            label: "Cell pipeline",
+            layout: "auto",
             vertex: {
                 module: shaderModule,
                 entryPoint: "vertexMain",
-                buffers: [vertexBufferLayout, colorsBufferLayout]
+                buffers: [vertexBufferLayout]
             },
             fragment: {
                 module: shaderModule,
                 entryPoint: "fragmentMain",
                 targets: [{ format: canvasFormat }]
-            },
-            label: "triangle",
-            layout: "auto",
-            primitive: {
-                topology: "triangle-list"
-            },            
-        });        
-    }
-
-    private createBuffer(vertices: Float32Array, label: string): GPUBuffer {
-        const buffer = this.device.createBuffer({
-            label,
-            size: vertices.byteLength,
-            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-            mappedAtCreation: true
-          });
-      
-          new Float32Array(buffer.getMappedRange()).set(vertices);
-          buffer.unmap();
-      
-          return buffer;
+            }
+        });  
     }
 }
