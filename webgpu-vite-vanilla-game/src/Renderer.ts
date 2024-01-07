@@ -1,11 +1,19 @@
-import triangleShader from "./shaders/triangle.wgsl?raw";
+import triangleShader from "./shaders/shader.wgsl?raw";
+import { QuadGeometry } from "./geometry";
+import { Texture } from "./texture";
 
 export class Renderer {
     private context!: GPUCanvasContext;
     private device!: GPUDevice;
     private pipeline!: GPURenderPipeline;
+
     private vertexBuffer!: GPUBuffer;
     private colorsBuffer!: GPUBuffer;
+
+    private textCoordsBuffer!: GPUBuffer;
+    private textureBindGroup!: GPUBindGroup;
+
+    private texture1!: Texture;
 
     public async initialize() {
         if (!navigator.gpu) {
@@ -23,17 +31,13 @@ export class Renderer {
             device: this.device,
             format: canvasFormat,
         });
+        const geometry = new QuadGeometry();
 
-        this.vertexBuffer = this.createBuffer(new Float32Array([
-            -0.5, -0.5,
-            0.5, -0.5,
-            0.0, 0.5
-        ]), "Cell vertices");
-        this.colorsBuffer = this.createBuffer(new Float32Array([
-           1.0, 0.0, 0.0,
-           0.0, 1.0, 0.0,
-           0.0, 0.0, 1.0,
-        ]), "Cell colors");
+        this.vertexBuffer = this.createBuffer(new Float32Array(geometry.positions), "Cell vertices");
+        this.colorsBuffer = this.createBuffer(new Float32Array(geometry.colors), "Cell colors");
+        this.textCoordsBuffer = this.createBuffer(new Float32Array(geometry.textCoords), "Cell texture");
+
+        this.texture1 = await Texture.createTextureFromUrl(this.device, "assets/uv_test.png");
 
         this.loadShader(canvasFormat);
     }
@@ -53,7 +57,10 @@ export class Renderer {
         pass.setVertexBuffer(0, this.vertexBuffer);
         pass.setVertexBuffer(1, this.colorsBuffer);
 
-        pass.draw(3);
+        pass.setVertexBuffer(2, this.textCoordsBuffer);
+        pass.setBindGroup(0, this.textureBindGroup);
+
+        pass.draw(6);
         pass.end();
         this.device.queue.submit([encoder.finish()]);
     }
@@ -79,21 +86,78 @@ export class Renderer {
                 offset: 0,
                 shaderLocation: 1, // colors, see vertex shader
             }],
-        };        
+        };
+
+        const textureBufferLayout: GPUVertexBufferLayout = {
+            arrayStride: 2 * Float32Array.BYTES_PER_ELEMENT,
+            attributes: [{
+                format: "float32x2",
+                offset: 0,
+                shaderLocation: 2, // colors, see vertex shader
+            }],
+        }; 
+
+        const textureBindGroupLayout = this.device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    sampler: {}
+                },
+                {
+                    binding: 1,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: {}
+                }
+            ]
+        });
+
+        const pipelineLayout = this.device.createPipelineLayout({
+            bindGroupLayouts: [
+                textureBindGroupLayout
+            ]
+        });
+
+        this.textureBindGroup = this.device.createBindGroup({
+            layout: textureBindGroupLayout,
+            entries: [
+                {
+                    binding: 0,
+                    resource: this.texture1.sampler,
+                }, {
+                    binding: 1,
+                    resource: this.texture1.texture.createView()
+                }
+            ]
+        })
 
         this.pipeline = this.device.createRenderPipeline({
             vertex: {
                 module: shaderModule,
                 entryPoint: "vertexMain",
-                buffers: [vertexBufferLayout, colorsBufferLayout]
+                buffers: [vertexBufferLayout, colorsBufferLayout, textureBufferLayout]
             },
             fragment: {
                 module: shaderModule,
                 entryPoint: "fragmentMain",
-                targets: [{ format: canvasFormat }]
+                targets: [{ 
+                    format: canvasFormat,
+                    blend: {
+                        color: {
+                            srcFactor: "one",
+                            dstFactor: "one-minus-src-alpha",
+                            operation: "add"
+                        },
+                        alpha: {
+                            srcFactor: "one",
+                            dstFactor: "zero",
+                            operation: "add"
+                        }
+                    }
+                }]
             },
             label: "triangle",
-            layout: "auto",
+            layout: pipelineLayout,
             primitive: {
                 topology: "triangle-list"
             },            
