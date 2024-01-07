@@ -26,4 +26,18 @@ export class BufferUtil {
       
           return buffer;
     }
+
+    public static createUniformBuffer(device: GPUDevice, vertices: Float32Array, label: string): GPUBuffer {
+        const buffer = device.createBuffer({
+            label,
+            size: vertices.byteLength,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: true
+          });
+      
+          new Uint16Array(buffer.getMappedRange()).set(vertices);
+          buffer.unmap();
+      
+          return buffer;
+    }
 }

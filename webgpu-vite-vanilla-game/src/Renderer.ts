@@ -2,6 +2,8 @@ import triangleShader from "./shaders/shader.wgsl?raw";
 import { QuadGeometry } from "./geometry";
 import { Texture } from "./texture";
 import { BufferUtil } from "./buffer-util";
+import { Camera } from "./camera";
+import { Content } from "./content";
 
 export class Renderer {
     private context!: GPUCanvasContext;
@@ -9,13 +11,15 @@ export class Renderer {
     private pipeline!: GPURenderPipeline;
 
     private vertexBuffer!: GPUBuffer;
-    private colorsBuffer!: GPUBuffer;
     private indexBuffer!: GPUBuffer;
+    private projectionViewMatrixBuffer!: GPUBuffer;
 
-    private textCoordsBuffer!: GPUBuffer;
     private textureBindGroup!: GPUBindGroup;
+    private projectionBindGroup!: GPUBindGroup;
 
     private texture1!: Texture;
+
+    private camera!: Camera;
 
     public async initialize() {
         if (!navigator.gpu) {
@@ -24,9 +28,11 @@ export class Renderer {
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) {
             throw new Error("No appropriate GPUAdapter found.");
-        }
+        }        
         this.device = await adapter.requestDevice();
+        await Content.initialize(this.device);
         const canvas = document.getElementById('canvas') as HTMLCanvasElement;        
+        this.camera = new Camera(canvas.width, canvas.height);
         this.context = canvas.getContext('webgpu')!;
         const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
         this.context.configure({
@@ -35,16 +41,17 @@ export class Renderer {
         });
         const geometry = new QuadGeometry();
 
-        this.vertexBuffer = BufferUtil.createVertexBuffer(this.device, new Float32Array(geometry.positions), "Cell vertices");
-        this.colorsBuffer = BufferUtil.createVertexBuffer(this.device, new Float32Array(geometry.colors), "Cell colors");
-        this.textCoordsBuffer = BufferUtil.createVertexBuffer(this.device, new Float32Array(geometry.textCoords), "Cell texture");
+        this.projectionViewMatrixBuffer = BufferUtil.createUniformBuffer(this.device, new Float32Array(16), "Cell uniform");
+        this.vertexBuffer = BufferUtil.createVertexBuffer(this.device, new Float32Array(geometry.vertices), "Cell vertices");
         this.indexBuffer = BufferUtil.createIndexBuffer(this.device, new Uint16Array(geometry.indices), "Cell indices");
+
         this.texture1 = await Texture.createTextureFromUrl(this.device, "assets/uv_test.png");
 
         this.loadShader(canvasFormat);
     }
 
     public draw() {
+        this.camera.update();
         const encoder = this.device.createCommandEncoder();
         const pass = encoder.beginRenderPass({
             colorAttachments: [{
@@ -54,18 +61,26 @@ export class Renderer {
                storeOp: "store",
             }]
         });
+
+        this.device.queue.writeBuffer(
+            this.projectionViewMatrixBuffer,
+            0,
+            this.camera.projectionViewMatrix as Float32Array
+        );
+
         pass.setPipeline(this.pipeline);
 
         pass.setIndexBuffer(this.indexBuffer, "uint16");
        
         pass.setVertexBuffer(0, this.vertexBuffer);
-        pass.setVertexBuffer(1, this.colorsBuffer);
 
-        pass.setVertexBuffer(2, this.textCoordsBuffer);
-        pass.setBindGroup(0, this.textureBindGroup);
+        pass.setBindGroup(0, this.projectionBindGroup);
+        pass.setBindGroup(1, this.textureBindGroup);
 
         pass.drawIndexed(6);
+
         pass.end();
+        
         this.device.queue.submit([encoder.finish()]);
     }
 
@@ -75,31 +90,37 @@ export class Renderer {
         });
 
         const vertexBufferLayout: GPUVertexBufferLayout = {
-            arrayStride: 2 * Float32Array.BYTES_PER_ELEMENT,
-            attributes: [{
-                format: "float32x2",
-                offset: 0,
-                shaderLocation: 0, // Position, see vertex shader
-            }],
+            arrayStride: 7 * Float32Array.BYTES_PER_ELEMENT,
+            attributes: [
+                {
+                    format: "float32x2",
+                    offset: 0,
+                    shaderLocation: 0, // position
+                },
+                {
+                    format: "float32x2",
+                    offset: 2 * Float32Array.BYTES_PER_ELEMENT,
+                    shaderLocation: 1, // uv 
+                },
+                {
+                    format: "float32x3",
+                    offset: 4 * Float32Array.BYTES_PER_ELEMENT,
+                    shaderLocation: 2, // rgb
+                },
+        ],
         };
 
-        const colorsBufferLayout: GPUVertexBufferLayout = {
-            arrayStride: 3 * Float32Array.BYTES_PER_ELEMENT,
-            attributes: [{
-                format: "float32x3",
-                offset: 0,
-                shaderLocation: 1, // colors, see vertex shader
-            }],
-        };
-
-        const textureBufferLayout: GPUVertexBufferLayout = {
-            arrayStride: 2 * Float32Array.BYTES_PER_ELEMENT,
-            attributes: [{
-                format: "float32x2",
-                offset: 0,
-                shaderLocation: 2, // colors, see vertex shader
-            }],
-        }; 
+        const projectionBindGroupLayout = this.device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.VERTEX,
+                    buffer: {
+                        type: "uniform"
+                    }
+                }
+            ]
+        });
 
         const textureBindGroupLayout = this.device.createBindGroupLayout({
             entries: [
@@ -118,19 +139,32 @@ export class Renderer {
 
         const pipelineLayout = this.device.createPipelineLayout({
             bindGroupLayouts: [
+                projectionBindGroupLayout,
                 textureBindGroupLayout
             ]
         });
+
+        this.projectionBindGroup = this.device.createBindGroup({
+            layout: projectionBindGroupLayout,
+            entries: [
+                {
+                    binding: 0,
+                    resource: {
+                        buffer: this.projectionViewMatrixBuffer
+                    }
+                },
+            ]
+        })
 
         this.textureBindGroup = this.device.createBindGroup({
             layout: textureBindGroupLayout,
             entries: [
                 {
                     binding: 0,
-                    resource: this.texture1.sampler,
+                    resource: Content.playerTexture.sampler,
                 }, {
                     binding: 1,
-                    resource: this.texture1.texture.createView()
+                    resource: Content.playerTexture.texture.createView()
                 }
             ]
         })
@@ -139,7 +173,7 @@ export class Renderer {
             vertex: {
                 module: shaderModule,
                 entryPoint: "vertexMain",
-                buffers: [vertexBufferLayout, colorsBufferLayout, textureBufferLayout]
+                buffers: [vertexBufferLayout]
             },
             fragment: {
                 module: shaderModule,
@@ -167,4 +201,5 @@ export class Renderer {
             },            
         });        
     }
+    
 }
