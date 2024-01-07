@@ -1,6 +1,7 @@
 import triangleShader from "./shaders/shader.wgsl?raw";
 import { QuadGeometry } from "./geometry";
 import { Texture } from "./texture";
+import { BufferUtil } from "./buffer-util";
 
 export class Renderer {
     private context!: GPUCanvasContext;
@@ -9,6 +10,7 @@ export class Renderer {
 
     private vertexBuffer!: GPUBuffer;
     private colorsBuffer!: GPUBuffer;
+    private indexBuffer!: GPUBuffer;
 
     private textCoordsBuffer!: GPUBuffer;
     private textureBindGroup!: GPUBindGroup;
@@ -33,10 +35,10 @@ export class Renderer {
         });
         const geometry = new QuadGeometry();
 
-        this.vertexBuffer = this.createBuffer(new Float32Array(geometry.positions), "Cell vertices");
-        this.colorsBuffer = this.createBuffer(new Float32Array(geometry.colors), "Cell colors");
-        this.textCoordsBuffer = this.createBuffer(new Float32Array(geometry.textCoords), "Cell texture");
-
+        this.vertexBuffer = BufferUtil.createVertexBuffer(this.device, new Float32Array(geometry.positions), "Cell vertices");
+        this.colorsBuffer = BufferUtil.createVertexBuffer(this.device, new Float32Array(geometry.colors), "Cell colors");
+        this.textCoordsBuffer = BufferUtil.createVertexBuffer(this.device, new Float32Array(geometry.textCoords), "Cell texture");
+        this.indexBuffer = BufferUtil.createIndexBuffer(this.device, new Uint16Array(geometry.indices), "Cell indices");
         this.texture1 = await Texture.createTextureFromUrl(this.device, "assets/uv_test.png");
 
         this.loadShader(canvasFormat);
@@ -53,6 +55,8 @@ export class Renderer {
             }]
         });
         pass.setPipeline(this.pipeline);
+
+        pass.setIndexBuffer(this.indexBuffer, "uint16");
        
         pass.setVertexBuffer(0, this.vertexBuffer);
         pass.setVertexBuffer(1, this.colorsBuffer);
@@ -60,7 +64,7 @@ export class Renderer {
         pass.setVertexBuffer(2, this.textCoordsBuffer);
         pass.setBindGroup(0, this.textureBindGroup);
 
-        pass.draw(6);
+        pass.drawIndexed(6);
         pass.end();
         this.device.queue.submit([encoder.finish()]);
     }
@@ -162,19 +166,5 @@ export class Renderer {
                 topology: "triangle-list"
             },            
         });        
-    }
-
-    private createBuffer(vertices: Float32Array, label: string): GPUBuffer {
-        const buffer = this.device.createBuffer({
-            label,
-            size: vertices.byteLength,
-            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-            mappedAtCreation: true
-          });
-      
-          new Float32Array(buffer.getMappedRange()).set(vertices);
-          buffer.unmap();
-      
-          return buffer;
     }
 }
